@@ -1114,6 +1114,13 @@ properties:
 
       - items:
           - enum:
+              - imdt,qcs8550-sbc
+          - const: imdt,qcs8550-som
+          - const: qcom,qcs8550
+          - const: qcom,sm8550
+
+      - items:
+          - enum:
               - ayaneo,pocket-s2
               - qcom,sm8650-hdk
               - qcom,sm8650-mtp
