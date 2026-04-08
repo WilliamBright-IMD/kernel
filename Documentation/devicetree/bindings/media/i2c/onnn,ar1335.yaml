@@ -13,6 +13,9 @@ description: |-
   The AR1335 is a 13MP raw CMOS image sensor with MIPI CSI-2 and
   I2C-compatible control interface.
 
+allOf:
+  - $ref: /schemas/media/video-interface-devices.yaml#
+
 properties:
   compatible:
     const: onnn,ar1335
@@ -42,6 +45,10 @@ properties:
     description: reset GPIO, usually active low
     maxItems: 1
 
+  orientation: true
+
+  rotation: true
+
   port:
     $ref: /schemas/graph.yaml#/$defs/port-base
     unevaluatedProperties: false
@@ -54,6 +61,8 @@ properties:
         unevaluatedProperties: false
 
         properties:
+          bus-type:
+            const: 4
           data-lanes:
             anyOf:
               - items:
@@ -96,6 +105,9 @@ examples:
                     vaa-supply = <&reg_2p7v>;
                     vdd-supply = <&reg_1p2v>;
                     vdd_io-supply = <&reg_1p8v>;
+
+                    orientation = <0>;
+                    rotation = <0>;
 
                     port {
                             ar1335_ep: endpoint {

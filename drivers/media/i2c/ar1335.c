@@ -1,0 +1,1141 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * ON Semiconductor AR1335 CMOS Image Sensor driver
+ *
+ * Copyright (C) 2026 IMD Technologies Ltd
+ */
+
+#include <linux/clk.h>
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
+#include <linux/i2c.h>
+#include <linux/pm_runtime.h>
+#include <linux/regulator/consumer.h>
+#include <linux/videodev2.h>
+#include <media/v4l2-cci.h>
+#include <media/v4l2-ctrls.h>
+#include <media/v4l2-device.h>
+#include <media/v4l2-fwnode.h>
+#include <media/v4l2-subdev.h>
+
+#define AR1335_NAME "ar1335"
+
+#define AR1335_CHIP_ID 0x0153
+#define AR1335_NUM_SUPPLIES 3
+
+/* External clock (extclk) frequencies */
+#define AR1335_EXTCLK_MIN (6 * 1000 * 1000)
+#define AR1335_EXTCLK_MAX (48 * 1000 * 1000)
+
+/* PLL limits */
+#define AR1335_PLL_MIN (320 * 1000 * 1000)
+#define AR1335_PLL_MAX (1200 * 1000 * 1000)
+
+/* Pixel clock */
+#define AR1335_PIXEL_CLOCK_DEFAULT (220 * 1000 * 1000)
+#define AR1335_PIXEL_CLOCK_MIN (168 * 1000 * 1000)
+#define AR1335_PIXEL_CLOCK_MAX (220 * 1000 * 1000)
+/* The video timing (VT) part of the sensor has two VT lanes and can
+ * process two pixels per VT pixel clock.
+ */
+#define AR1335_NUM_VT_LANES 2u
+#define AR1335_PIXEL_RATE_DEFAULT \
+	(AR1335_NUM_VT_LANES * AR1335_PIXEL_CLOCK_DEFAULT)
+#define AR1335_PIXEL_RATE_MIN (AR1335_NUM_VT_LANES * AR1335_PIXEL_CLOCK_MIN)
+#define AR1335_PIXEL_RATE_MAX (AR1335_NUM_VT_LANES * AR1335_PIXEL_CLOCK_MAX)
+
+/* Sensor pixel array limits */
+#define AR1335_MIN_X_ADDR_START 8u
+#define AR1335_MIN_Y_ADDR_START 8u
+#define AR1335_MAX_X_ADDR_END 4231u
+#define AR1335_MAX_Y_ADDR_END 3143u
+
+#define AR1335_WIDTH_MIN 8u
+#define AR1335_WIDTH_MAX 4224u
+#define AR1335_HEIGHT_MIN 8u
+#define AR1335_HEIGHT_MAX 3136u
+
+#define AR1335_WIDTH_BLANKING_MIN 464u
+#define AR1335_HEIGHT_BLANKING_MIN 30u
+#define AR1335_TOTAL_HEIGHT_MAX 65535u
+#define AR1335_TOTAL_WIDTH_MAX 65532u
+
+/* Analog gain */
+#define AR1335_ANA_GAIN_MIN 0x00
+#define AR1335_ANA_GAIN_MAX 0x3f
+#define AR1335_ANA_GAIN_STEP 0x01
+#define AR1335_ANA_GAIN_DEFAULT 0x00
+
+/* AR1335 registers */
+#define AR1335_REG_CHIP_ID CCI_REG16(0x0000)
+#define AR1335_REG_IMAGE_ORIENTATION CCI_REG8(0x0101)
+#define AR1335_IMAGE_ORIENTATION_HFLIP BIT(0)
+#define AR1335_IMAGE_ORIENTATION_VFLIP BIT(1)
+#define AR1335_REG_CCP_DATA_FORMAT CCI_REG16(0x0112)
+#define AR1335_REG_VT_PIX_CLK_DIV CCI_REG16(0x0300)
+#define AR1335_REG_VT_SYS_CLK_DIV CCI_REG16(0x0302)
+#define AR1335_REG_PRE_PLL_CLK_DIV CCI_REG16(0x0304)
+#define AR1335_REG_PLL_MULTIPLIER CCI_REG16(0x0306)
+#define AR1335_REG_OP_PIX_CLK_DIV CCI_REG16(0x0308)
+#define AR1335_REG_OP_SYS_CLK_DIV CCI_REG16(0x030A)
+#define AR1335_REG_FRAME_LENGTH_LINES CCI_REG16(0x0340)
+#define AR1335_REG_LINE_LENGTH_PCK CCI_REG16(0x0342)
+#define AR1335_REG_X_ADDR_START CCI_REG16(0x0344)
+#define AR1335_REG_Y_ADDR_START CCI_REG16(0x0346)
+#define AR1335_REG_X_ADDR_END CCI_REG16(0x0348)
+#define AR1335_REG_Y_ADDR_END CCI_REG16(0x034A)
+#define AR1335_REG_X_OUTPUT_SIZE CCI_REG16(0x034C)
+#define AR1335_REG_Y_OUTPUT_SIZE CCI_REG16(0x034E)
+#define AR1335_REG_COARSE_INTEGRATION_TIME CCI_REG16(0x3012)
+#define AR1335_REG_ROW_SPEED CCI_REG16(0x3016)
+#define AR1335_REG_RESET CCI_REG16(0x301A)
+#define AR1335_REG_RESET_DEFAULTS 0x0238
+#define AR1335_REG_RESET_STREAM BIT(2)
+#define AR1335_REG_ANA_GAIN_CODE_GLOBAL CCI_REG16(0x3028)
+#define AR1335_REG_GREEN1_GAIN CCI_REG16(0x3056)
+#define AR1335_REG_BLUE_GAIN CCI_REG16(0x3058)
+#define AR1335_REG_RED_GAIN CCI_REG16(0x305A)
+#define AR1335_REG_GREEN2_GAIN CCI_REG16(0x305C)
+#define AR1335_REG_GLOBAL_GAIN CCI_REG16(0x305E)
+#define AR1335_REG_HISPI_TEST_MODE CCI_REG16(0x3066)
+#define AR1335_REG_HISPI_TEST_MODE_LP11 0x0004
+#define AR1335_REG_TEST_PATTERN_MODE CCI_REG16(0x3070)
+#define AR1335_REG_FRAME_PREAMBLE CCI_REG16(0x31B0)
+#define AR1335_REG_LINE_PREAMBLE CCI_REG16(0x31B2)
+#define AR1335_REG_MIPI_TIMING_0 CCI_REG16(0x31B4)
+#define AR1335_REG_MIPI_TIMING_1 CCI_REG16(0x31B6)
+#define AR1335_REG_MIPI_TIMING_2 CCI_REG16(0x31B8)
+#define AR1335_REG_MIPI_TIMING_3 CCI_REG16(0x31BA)
+#define AR1335_REG_MIPI_TIMING_4 CCI_REG16(0x31BC)
+#define AR1335_REG_SERIAL_FORMAT CCI_REG16(0x31AE)
+#define AR1335_REG_SERIAL_FORMAT_MIPI 0x0200
+#define AR1335_REG_HISPI_CONTROL_STATUS CCI_REG16(0x31C6)
+
+static const struct cci_reg_sequence ar1335_init_regs[] = {
+	/* MIPI timing */
+	{ AR1335_REG_FRAME_PREAMBLE, 0x005C },
+	{ AR1335_REG_LINE_PREAMBLE, 0x002D },
+	{ AR1335_REG_MIPI_TIMING_0, 0x2412 },
+	{ AR1335_REG_MIPI_TIMING_1, 0x142A },
+	{ AR1335_REG_MIPI_TIMING_2, 0x2413 },
+	{ AR1335_REG_MIPI_TIMING_3, 0x1C70 },
+	{ AR1335_REG_MIPI_TIMING_4, 0x868B },
+	/* 10-bit Bayer output */
+	{ AR1335_REG_CCP_DATA_FORMAT, 0x0A0A },
+};
+
+static const char *const ar1335_supply_names[] = {
+	"vdd_io",
+	"vdd",
+	"vaa",
+};
+
+/*
+ * link_freq = pixel_rate * bpp / (2 * num_lanes). The default 550 MHz
+ * entry configures a pixel rate of 440MPixels/s.
+ */
+static const s64 ar1335_link_frequencies[] = {
+	550000000,
+	480000000,
+	420000000,
+};
+
+struct ar1335_ctrls {
+	struct v4l2_ctrl_handler handler;
+	struct {
+		struct v4l2_ctrl *gain;
+		struct v4l2_ctrl *red_balance;
+		struct v4l2_ctrl *blue_balance;
+	};
+	struct {
+		struct v4l2_ctrl *hblank;
+		struct v4l2_ctrl *vblank;
+	};
+	struct v4l2_ctrl *pixrate;
+	struct v4l2_ctrl *link_freq;
+	struct v4l2_ctrl *exposure;
+	struct v4l2_ctrl *hflip;
+	struct v4l2_ctrl *vflip;
+	struct v4l2_ctrl *test_pattern;
+};
+
+struct ar1335_dev {
+	struct i2c_client *i2c_client;
+	struct regmap *regmap;
+	struct v4l2_subdev sd;
+	struct media_pad pad;
+	struct clk *extclk;
+	u32 extclk_freq;
+
+	struct regulator_bulk_data supplies[AR1335_NUM_SUPPLIES];
+	struct gpio_desc *reset_gpio;
+
+	/* lock to protect all members below */
+	struct mutex lock;
+	struct v4l2_mbus_framefmt fmt;
+	struct ar1335_ctrls ctrls;
+	unsigned int lane_count;
+	struct {
+		u16 pre;
+		u16 mult;
+		u16 pre2;
+		u16 mult2;
+		u16 vt_pix;
+	} pll;
+	bool is_streaming;
+};
+
+static inline struct ar1335_dev *to_ar1335_dev(struct v4l2_subdev *sd)
+{
+	return container_of(sd, struct ar1335_dev, sd);
+}
+
+static inline struct v4l2_subdev *ctrl_to_sd(struct v4l2_ctrl *ctrl)
+{
+	return &container_of(ctrl->handler, struct ar1335_dev, ctrls.handler)
+			->sd;
+}
+
+static u32 div64_round(u64 v, u32 d)
+{
+	return div_u64(v + (d >> 1), d);
+}
+
+static u32 div64_round_up(u64 v, u32 d)
+{
+	return div_u64(v + d - 1, d);
+}
+
+static const u32 ar1335_mbus_codes[] = {
+	MEDIA_BUS_FMT_SGRBG10_1X10, /* no flip (native) */
+	MEDIA_BUS_FMT_SRGGB10_1X10, /* hflip */
+	MEDIA_BUS_FMT_SBGGR10_1X10, /* vflip */
+	MEDIA_BUS_FMT_SGBRG10_1X10, /* hflip + vflip */
+};
+
+static u32 ar1335_get_mbus_code(struct ar1335_dev *sensor)
+{
+	unsigned int i = (sensor->ctrls.vflip->val ? 2 : 0) |
+			 (sensor->ctrls.hflip->val ? 1 : 0);
+
+	return ar1335_mbus_codes[i];
+}
+
+static bool ar1335_code_supported(u32 code)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(ar1335_mbus_codes); i++)
+		if (ar1335_mbus_codes[i] == code)
+			return true;
+
+	return false;
+}
+
+static int ar1335_code_to_bpp(struct ar1335_dev *sensor)
+{
+	if (!ar1335_code_supported(sensor->fmt.code))
+		return -EINVAL;
+
+	return 10;
+}
+
+static inline int ar1335_write_reg(struct ar1335_dev *sensor, u32 reg, u16 val)
+{
+	return cci_write(sensor->regmap, reg, val, NULL);
+}
+
+static inline int ar1335_read_reg(struct ar1335_dev *sensor, u32 reg, u64 *val)
+{
+	return cci_read(sensor->regmap, reg, val, NULL);
+}
+
+static void ar1335_get_crop_rect(u32 width, u32 height, struct v4l2_rect *rect)
+{
+	/* Center the window within the readable pixel array */
+	rect->width = width;
+	rect->height = height;
+	rect->left = AR1335_MIN_X_ADDR_START + (AR1335_WIDTH_MAX - width) / 2;
+	rect->top = AR1335_MIN_Y_ADDR_START + (AR1335_HEIGHT_MAX - height) / 2;
+}
+
+static int ar1335_set_geometry(struct ar1335_dev *sensor)
+{
+	u16 out_width = sensor->fmt.width;
+	u16 out_height = sensor->fmt.height;
+	struct v4l2_rect crop;
+	u16 x_start, y_start, x_end, y_end;
+
+	/* Center-crop the readout window to match the output size */
+	ar1335_get_crop_rect(out_width, out_height, &crop);
+	x_start = crop.left;
+	y_start = crop.top;
+	x_end = x_start + out_width - 1;
+	y_end = y_start + out_height - 1;
+
+	{
+		struct cci_reg_sequence regs[] = {
+			{ AR1335_REG_FRAME_LENGTH_LINES,
+			  out_height + sensor->ctrls.vblank->val },
+			{ AR1335_REG_LINE_LENGTH_PCK,
+			  out_width + sensor->ctrls.hblank->val },
+			{ AR1335_REG_X_ADDR_START, x_start },
+			{ AR1335_REG_Y_ADDR_START, y_start },
+			{ AR1335_REG_X_ADDR_END, x_end },
+			{ AR1335_REG_Y_ADDR_END, y_end },
+			{ AR1335_REG_X_OUTPUT_SIZE, out_width },
+			{ AR1335_REG_Y_OUTPUT_SIZE, out_height },
+		};
+
+		return cci_multi_reg_write(sensor->regmap, regs,
+					   ARRAY_SIZE(regs), NULL);
+	}
+}
+
+static int ar1335_set_gains(struct ar1335_dev *sensor)
+{
+	int green = sensor->ctrls.gain->val;
+	int red = max(green + sensor->ctrls.red_balance->val, 0);
+	int blue = max(green + sensor->ctrls.blue_balance->val, 0);
+	unsigned int gain = min(red, min(green, blue));
+	unsigned int analog = min(gain, 64u);
+	struct cci_reg_sequence regs[4];
+
+	red = min(red - analog + 64, 511u);
+	green = min(green - analog + 64, 511u);
+	blue = min(blue - analog + 64, 511u);
+
+	regs[0] = (struct cci_reg_sequence){ AR1335_REG_GREEN1_GAIN,
+					     green << 7 | analog };
+	regs[1] = (struct cci_reg_sequence){ AR1335_REG_BLUE_GAIN,
+					     blue << 7 | analog };
+	regs[2] = (struct cci_reg_sequence){ AR1335_REG_RED_GAIN,
+					     red << 7 | analog };
+	regs[3] = (struct cci_reg_sequence){ AR1335_REG_GREEN2_GAIN,
+					     green << 7 | analog };
+
+	return cci_multi_reg_write(sensor->regmap, regs, ARRAY_SIZE(regs),
+				   NULL);
+}
+
+static int ar1335_set_orientation(struct ar1335_dev *sensor)
+{
+	u8 orientation = 0;
+
+	if (sensor->ctrls.hflip->val)
+		orientation |= AR1335_IMAGE_ORIENTATION_HFLIP;
+	if (sensor->ctrls.vflip->val)
+		orientation |= AR1335_IMAGE_ORIENTATION_VFLIP;
+
+	return ar1335_write_reg(sensor, AR1335_REG_IMAGE_ORIENTATION,
+				orientation);
+}
+
+static u32 calc_pll(struct ar1335_dev *sensor, u32 freq, u16 *pre_ptr,
+		    u16 *mult_ptr)
+{
+	u16 pre = 1, mult = 1, new_pre;
+	u32 pll = AR1335_PLL_MAX + 1;
+
+	for (new_pre = 1; new_pre < 64; new_pre++) {
+		u32 new_pll;
+		u32 new_mult = div64_round_up((u64)freq * new_pre,
+					      sensor->extclk_freq);
+
+		if (new_mult < 32)
+			continue;
+		if (new_mult > 254)
+			break;
+		if (sensor->extclk_freq * (u64)new_mult <
+		    AR1335_PLL_MIN * new_pre)
+			continue;
+		if (sensor->extclk_freq * (u64)new_mult >
+		    AR1335_PLL_MAX * new_pre)
+			break;
+		new_pll = div64_round_up(sensor->extclk_freq * (u64)new_mult,
+					 new_pre);
+		if (new_pll < pll) {
+			pll = new_pll;
+			pre = new_pre;
+			mult = new_mult;
+		}
+	}
+
+	pll = div64_round(sensor->extclk_freq * (u64)mult, pre);
+	*pre_ptr = pre;
+	*mult_ptr = mult;
+
+	return pll;
+}
+
+static void ar1335_calc_pll(struct ar1335_dev *sensor)
+{
+	u32 vco, pll;
+	u16 pre, mult;
+	int bpp;
+
+	bpp = ar1335_code_to_bpp(sensor);
+	if (bpp < 0)
+		return;
+
+	sensor->pll.vt_pix = bpp / 2;
+
+	vco = 2 * ar1335_link_frequencies[sensor->ctrls.link_freq->val];
+
+	pll = calc_pll(sensor, vco, &pre, &mult);
+
+	sensor->pll.pre = sensor->pll.pre2 = pre;
+	sensor->pll.mult = sensor->pll.mult2 = mult;
+
+	/*
+	 * The VT domain reads out AR1335_NUM_VT_LANES pixels per VT
+	 * pixel clock.
+	 */
+	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixrate,
+				 div64_round((u64)pll * AR1335_NUM_VT_LANES,
+					     sensor->pll.vt_pix));
+}
+
+static int ar1335_pll_config(struct ar1335_dev *sensor)
+{
+	struct cci_reg_sequence pll_regs[6];
+
+	ar1335_calc_pll(sensor);
+
+	pll_regs[0] = (struct cci_reg_sequence){ AR1335_REG_VT_PIX_CLK_DIV,
+						 sensor->pll.vt_pix };
+	pll_regs[1] = (struct cci_reg_sequence){ AR1335_REG_VT_SYS_CLK_DIV, 1 };
+	pll_regs[2] = (struct cci_reg_sequence){ AR1335_REG_PRE_PLL_CLK_DIV,
+						 (sensor->pll.pre2 << 8) |
+							 sensor->pll.pre };
+	pll_regs[3] = (struct cci_reg_sequence){ AR1335_REG_PLL_MULTIPLIER,
+						 (sensor->pll.mult2 << 8) |
+							 sensor->pll.mult };
+	pll_regs[4] = (struct cci_reg_sequence){ AR1335_REG_OP_PIX_CLK_DIV,
+						 sensor->pll.vt_pix * 2 };
+	pll_regs[5] = (struct cci_reg_sequence){ AR1335_REG_OP_SYS_CLK_DIV, 1 };
+
+	return cci_multi_reg_write(sensor->regmap, pll_regs,
+				   ARRAY_SIZE(pll_regs), NULL);
+}
+
+static int ar1335_start_streaming(struct ar1335_dev *sensor)
+{
+	int ret;
+
+	ret = ar1335_write_reg(sensor, AR1335_REG_RESET,
+			       AR1335_REG_RESET_DEFAULTS);
+	if (ret)
+		return ret;
+
+	ret = ar1335_set_geometry(sensor);
+	if (ret)
+		return ret;
+
+	ret = ar1335_pll_config(sensor);
+	if (ret)
+		return ret;
+
+	/* Set GLOBAL_GAIN baseline before applying V4L2 controls */
+	ret = ar1335_write_reg(sensor, AR1335_REG_GLOBAL_GAIN, 0x2000);
+	if (ret)
+		return ret;
+
+	ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+	if (ret)
+		return ret;
+
+	/* Exit LP-11 mode on clock and data lanes */
+	ret = ar1335_write_reg(sensor, AR1335_REG_HISPI_CONTROL_STATUS, 0);
+	if (ret)
+		return ret;
+
+	ret = ar1335_write_reg(sensor, AR1335_REG_RESET,
+			       AR1335_REG_RESET_DEFAULTS |
+				       AR1335_REG_RESET_STREAM);
+	if (ret)
+		return ret;
+
+	msleep(200);
+	return 0;
+}
+
+static int ar1335_stop_streaming(struct ar1335_dev *sensor)
+{
+	int ret;
+
+	/* Reset gain to avoid all-white pixels on next stream on */
+	ret = ar1335_write_reg(sensor, AR1335_REG_GLOBAL_GAIN, 0x2000);
+	if (ret)
+		return ret;
+
+	return ar1335_write_reg(sensor, AR1335_REG_RESET,
+				AR1335_REG_RESET_DEFAULTS);
+}
+
+static void ar1335_adj_fmt(struct ar1335_dev *sensor,
+			   struct v4l2_mbus_framefmt *fmt)
+{
+	/* Align to 4 pixels so the bayer pattern doesn't change */
+	fmt->width =
+		clamp(ALIGN(fmt->width, 4), AR1335_WIDTH_MIN, AR1335_WIDTH_MAX);
+	fmt->height = clamp(ALIGN(fmt->height, 4), AR1335_HEIGHT_MIN,
+			    AR1335_HEIGHT_MAX);
+	fmt->code = ar1335_get_mbus_code(sensor);
+	fmt->field = V4L2_FIELD_NONE;
+	fmt->colorspace = V4L2_COLORSPACE_SRGB;
+	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+	fmt->xfer_func = V4L2_XFER_FUNC_DEFAULT;
+}
+
+static int ar1335_get_fmt(struct v4l2_subdev *sd,
+			  struct v4l2_subdev_state *state,
+			  struct v4l2_subdev_format *format)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	mutex_lock(&sensor->lock);
+
+	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
+		format->format = *v4l2_subdev_state_get_format(state, 0);
+	else
+		format->format = sensor->fmt;
+
+	format->format.code = ar1335_get_mbus_code(sensor);
+
+	mutex_unlock(&sensor->lock);
+
+	return 0;
+}
+
+static int ar1335_set_fmt(struct v4l2_subdev *sd,
+			  struct v4l2_subdev_state *state,
+			  struct v4l2_subdev_format *format)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+	int max_vblank, max_hblank, vblank, hblank;
+	int ret = 0;
+
+	ar1335_adj_fmt(sensor, &format->format);
+
+	mutex_lock(&sensor->lock);
+
+	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+		*v4l2_subdev_state_get_format(state, 0) = format->format;
+		mutex_unlock(&sensor->lock);
+		return 0;
+	}
+
+	sensor->fmt = format->format;
+	ar1335_calc_pll(sensor);
+
+	hblank = AR1335_WIDTH_BLANKING_MIN;
+	vblank = AR1335_HEIGHT_BLANKING_MIN;
+
+	max_hblank = AR1335_TOTAL_WIDTH_MAX - sensor->fmt.width;
+	ret = __v4l2_ctrl_modify_range(sensor->ctrls.hblank,
+				       AR1335_WIDTH_BLANKING_MIN, max_hblank, 1,
+				       hblank);
+	if (ret)
+		goto unlock;
+
+	ret = __v4l2_ctrl_s_ctrl(sensor->ctrls.hblank, hblank);
+	if (ret)
+		goto unlock;
+
+	max_vblank = AR1335_TOTAL_HEIGHT_MAX - sensor->fmt.height;
+	ret = __v4l2_ctrl_modify_range(sensor->ctrls.vblank,
+				       AR1335_HEIGHT_BLANKING_MIN, max_vblank,
+				       2, vblank);
+	if (ret)
+		goto unlock;
+
+	ret = __v4l2_ctrl_s_ctrl(sensor->ctrls.vblank, vblank);
+	if (ret)
+		goto unlock;
+
+	ret = __v4l2_ctrl_modify_range(
+		sensor->ctrls.exposure, sensor->ctrls.exposure->minimum,
+		sensor->fmt.height + vblank - 4, sensor->ctrls.exposure->step,
+		min_t(s32, sensor->ctrls.exposure->default_value,
+		      sensor->fmt.height + vblank - 4));
+
+unlock:
+	mutex_unlock(&sensor->lock);
+	return ret;
+}
+
+static int ar1335_get_selection(struct v4l2_subdev *sd,
+				struct v4l2_subdev_state *state,
+				struct v4l2_subdev_selection *sel)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+		/* Analogue crop rectangle currently read out from the array */
+		mutex_lock(&sensor->lock);
+		if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
+			struct v4l2_mbus_framefmt *fmt =
+				v4l2_subdev_state_get_format(state, 0);
+
+			ar1335_get_crop_rect(fmt->width, fmt->height, &sel->r);
+		} else {
+			ar1335_get_crop_rect(sensor->fmt.width,
+					     sensor->fmt.height, &sel->r);
+		}
+		mutex_unlock(&sensor->lock);
+		return 0;
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+		/* Readable pixel array area */
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+		/* Active pixel array area */
+		sel->r.left = AR1335_MIN_X_ADDR_START;
+		sel->r.top = AR1335_MIN_Y_ADDR_START;
+		sel->r.width = AR1335_WIDTH_MAX;
+		sel->r.height = AR1335_HEIGHT_MAX;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+static const u16 ar1335_test_pattern_values[] = {
+	0x000, 0x001, 0x002, 0x003, 0x100, 0x101,
+};
+
+static const char *const ar1335_test_pattern_menu[] = {
+	"Normal pixel operation",  "Solid color",	  "100% Color Bar",
+	"Fade-to-Gray Color Bars", "Walking 1s (10-bit)", "Walking 1s (8-bit)",
+};
+
+static int ar1335_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct v4l2_subdev *sd = ctrl_to_sd(ctrl);
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+	int exp_max;
+	int ret;
+
+	switch (ctrl->id) {
+	case V4L2_CID_LINK_FREQ:
+		ar1335_calc_pll(sensor);
+		return 0;
+	case V4L2_CID_PIXEL_RATE:
+		/* Read only */
+		return 0;
+	}
+
+	if (ctrl->id == V4L2_CID_HBLANK || ctrl->id == V4L2_CID_VBLANK) {
+		exp_max = sensor->fmt.height + sensor->ctrls.vblank->val - 4;
+		__v4l2_ctrl_modify_range(sensor->ctrls.exposure,
+					 sensor->ctrls.exposure->minimum,
+					 exp_max, sensor->ctrls.exposure->step,
+					 sensor->ctrls.exposure->default_value);
+	}
+
+	/* Only write HW when streaming; controls are replayed at stream-on */
+	if (!sensor->is_streaming)
+		return 0;
+
+	switch (ctrl->id) {
+	case V4L2_CID_VBLANK:
+		ret = ar1335_set_geometry(sensor);
+		break;
+	case V4L2_CID_HBLANK:
+		ret = ar1335_set_geometry(sensor);
+		break;
+	case V4L2_CID_ANALOGUE_GAIN:
+		ret = ar1335_write_reg(sensor, AR1335_REG_ANA_GAIN_CODE_GLOBAL,
+				       ctrl->val);
+		break;
+	case V4L2_CID_GAIN:
+	case V4L2_CID_RED_BALANCE:
+	case V4L2_CID_BLUE_BALANCE:
+		ret = ar1335_set_gains(sensor);
+		break;
+	case V4L2_CID_EXPOSURE:
+		ret = ar1335_write_reg(
+			sensor, AR1335_REG_COARSE_INTEGRATION_TIME, ctrl->val);
+		break;
+	case V4L2_CID_HFLIP:
+	case V4L2_CID_VFLIP:
+		ret = ar1335_set_orientation(sensor);
+		break;
+	case V4L2_CID_TEST_PATTERN:
+		ret = ar1335_write_reg(sensor, AR1335_REG_TEST_PATTERN_MODE,
+				       ar1335_test_pattern_values[ctrl->val]);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+static const struct v4l2_ctrl_ops ar1335_ctrl_ops = {
+	.s_ctrl = ar1335_s_ctrl,
+};
+
+static int ar1335_init_controls(struct ar1335_dev *sensor)
+{
+	const struct v4l2_ctrl_ops *ops = &ar1335_ctrl_ops;
+	struct ar1335_ctrls *ctrls = &sensor->ctrls;
+	struct v4l2_ctrl_handler *hdl = &ctrls->handler;
+	struct v4l2_fwnode_device_properties props;
+	int max_vblank, max_hblank;
+	int ret;
+
+	v4l2_ctrl_handler_init(hdl, 32);
+	hdl->lock = &sensor->lock;
+
+	v4l2_ctrl_new_std(hdl, ops, V4L2_CID_ANALOGUE_GAIN, AR1335_ANA_GAIN_MIN,
+			  AR1335_ANA_GAIN_MAX, AR1335_ANA_GAIN_STEP,
+			  AR1335_ANA_GAIN_DEFAULT);
+
+	ctrls->gain = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_GAIN, 0, 511, 1, 40);
+	ctrls->red_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_RED_BALANCE,
+					       -512, 511, 1, 0);
+	ctrls->blue_balance = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_BLUE_BALANCE,
+						-512, 511, 1, 0);
+	v4l2_ctrl_cluster(3, &ctrls->gain);
+
+	max_hblank = AR1335_TOTAL_WIDTH_MAX - AR1335_WIDTH_MAX;
+	ctrls->hblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HBLANK,
+					  AR1335_WIDTH_BLANKING_MIN, max_hblank,
+					  1, AR1335_WIDTH_BLANKING_MIN);
+
+	max_vblank = AR1335_TOTAL_HEIGHT_MAX - AR1335_HEIGHT_MAX;
+	ctrls->vblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK,
+					  AR1335_HEIGHT_BLANKING_MIN,
+					  max_vblank, 2,
+					  AR1335_HEIGHT_BLANKING_MIN);
+	v4l2_ctrl_cluster(2, &ctrls->hblank);
+
+	ctrls->pixrate = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_PIXEL_RATE,
+					   AR1335_PIXEL_RATE_MIN,
+					   AR1335_PIXEL_RATE_MAX, 1,
+					   AR1335_PIXEL_RATE_DEFAULT);
+	if (ctrls->pixrate)
+		ctrls->pixrate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+
+	ctrls->exposure = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_EXPOSURE, 0,
+					    65535, 1, 0x0C2E);
+
+	ctrls->hflip = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+	if (ctrls->hflip)
+		ctrls->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+	ctrls->vflip = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (ctrls->vflip)
+		ctrls->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
+
+	ctrls->link_freq =
+		v4l2_ctrl_new_int_menu(hdl, ops, V4L2_CID_LINK_FREQ,
+				       ARRAY_SIZE(ar1335_link_frequencies) - 1,
+				       0, ar1335_link_frequencies);
+
+	ctrls->test_pattern = v4l2_ctrl_new_std_menu_items(
+		hdl, ops, V4L2_CID_TEST_PATTERN,
+		ARRAY_SIZE(ar1335_test_pattern_menu) - 1, 0, 0,
+		ar1335_test_pattern_menu);
+
+	ret = v4l2_fwnode_device_parse(&sensor->i2c_client->dev, &props);
+	if (ret)
+		goto free_ctrls;
+
+	ret = v4l2_ctrl_new_fwnode_properties(hdl, ops, &props);
+	if (ret)
+		goto free_ctrls;
+
+	if (hdl->error) {
+		ret = hdl->error;
+		goto free_ctrls;
+	}
+
+	sensor->sd.ctrl_handler = hdl;
+	return 0;
+
+free_ctrls:
+	v4l2_ctrl_handler_free(hdl);
+	return ret;
+}
+
+static int ar1335_power_off(struct device *dev)
+{
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	clk_disable_unprepare(sensor->extclk);
+	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
+	regulator_bulk_disable(AR1335_NUM_SUPPLIES, sensor->supplies);
+
+	return 0;
+}
+
+static int ar1335_power_on(struct device *dev)
+{
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+	int ret;
+
+	ret = regulator_bulk_enable(AR1335_NUM_SUPPLIES, sensor->supplies);
+	if (ret)
+		return ret;
+
+	ret = clk_prepare_enable(sensor->extclk);
+	if (ret)
+		goto disable_regulators;
+	/* Hold in reset for 1ms */
+	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
+	usleep_range(1000, 2000);
+	/* Release from reset; wait >300k EXTCLK cycles (~16ms at 19.2 MHz) */
+	gpiod_set_value_cansleep(sensor->reset_gpio, 0);
+	usleep_range(20000, 25000);
+
+	ret = cci_multi_reg_write(sensor->regmap, ar1335_init_regs,
+				  ARRAY_SIZE(ar1335_init_regs), NULL);
+	if (ret)
+		goto assert_reset;
+
+	ret = ar1335_write_reg(sensor, AR1335_REG_SERIAL_FORMAT,
+			       AR1335_REG_SERIAL_FORMAT_MIPI |
+				       sensor->lane_count);
+	if (ret)
+		goto assert_reset;
+
+	ret = ar1335_write_reg(sensor, AR1335_REG_HISPI_TEST_MODE,
+			       ((0x40 << sensor->lane_count) - 0x40) |
+				       AR1335_REG_HISPI_TEST_MODE_LP11);
+	if (ret)
+		goto assert_reset;
+
+	ret = ar1335_write_reg(sensor, AR1335_REG_ROW_SPEED,
+			       0x110 | 4 / sensor->lane_count);
+	if (ret)
+		goto assert_reset;
+
+	return 0;
+
+assert_reset:
+	gpiod_set_value_cansleep(sensor->reset_gpio, 1);
+	clk_disable_unprepare(sensor->extclk);
+disable_regulators:
+	regulator_bulk_disable(AR1335_NUM_SUPPLIES, sensor->supplies);
+	return ret;
+}
+
+static const struct dev_pm_ops ar1335_pm_ops = { SET_RUNTIME_PM_OPS(
+	ar1335_power_off, ar1335_power_on, NULL) };
+
+static int ar1335_enum_mbus_code(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_state *state,
+				 struct v4l2_subdev_mbus_code_enum *code)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	if (code->index)
+		return -EINVAL;
+
+	code->code = ar1335_get_mbus_code(sensor);
+	return 0;
+}
+
+static int ar1335_enum_frame_size(struct v4l2_subdev *sd,
+				  struct v4l2_subdev_state *state,
+				  struct v4l2_subdev_frame_size_enum *fse)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	if (fse->index)
+		return -EINVAL;
+
+	/* Only the code matching the current flip state is valid. */
+	if (fse->code != ar1335_get_mbus_code(sensor))
+		return -EINVAL;
+
+	fse->min_width = AR1335_WIDTH_MIN;
+	fse->max_width = AR1335_WIDTH_MAX;
+	fse->min_height = AR1335_HEIGHT_MIN;
+	fse->max_height = AR1335_HEIGHT_MAX;
+
+	return 0;
+}
+
+static int ar1335_s_stream(struct v4l2_subdev *sd, int enable)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+	struct device *dev = &sensor->i2c_client->dev;
+	int ret;
+
+	mutex_lock(&sensor->lock);
+
+	if (enable) {
+		ret = pm_runtime_resume_and_get(dev);
+		if (ret < 0)
+			goto unlock;
+
+		sensor->is_streaming = true;
+		ret = ar1335_start_streaming(sensor);
+		if (ret) {
+			sensor->is_streaming = false;
+			pm_runtime_put_sync(dev);
+			goto unlock;
+		}
+	} else {
+		sensor->is_streaming = false;
+		ret = ar1335_stop_streaming(sensor);
+		pm_runtime_mark_last_busy(dev);
+		pm_runtime_put_autosuspend(dev);
+	}
+
+unlock:
+	mutex_unlock(&sensor->lock);
+	/* Lock hflip,vflip and link frequency whilst streaming */
+	v4l2_ctrl_grab(sensor->ctrls.hflip, enable && !ret);
+	v4l2_ctrl_grab(sensor->ctrls.vflip, enable && !ret);
+	v4l2_ctrl_grab(sensor->ctrls.link_freq, enable && !ret);
+
+	return ret;
+}
+
+static const struct media_entity_operations ar1335_media_ops = {
+	.link_validate = v4l2_subdev_link_validate,
+};
+
+static const struct v4l2_subdev_core_ops ar1335_core_ops = {
+	.log_status = v4l2_ctrl_subdev_log_status,
+};
+
+static const struct v4l2_subdev_video_ops ar1335_video_ops = {
+	.s_stream = ar1335_s_stream,
+};
+
+static const struct v4l2_subdev_pad_ops ar1335_pad_ops = {
+	.enum_mbus_code = ar1335_enum_mbus_code,
+	.enum_frame_size = ar1335_enum_frame_size,
+	.get_fmt = ar1335_get_fmt,
+	.set_fmt = ar1335_set_fmt,
+	.get_selection = ar1335_get_selection,
+};
+
+static const struct v4l2_subdev_ops ar1335_subdev_ops = {
+	.core = &ar1335_core_ops,
+	.video = &ar1335_video_ops,
+	.pad = &ar1335_pad_ops,
+};
+
+static int ar1335_init_state(struct v4l2_subdev *sd,
+			     struct v4l2_subdev_state *state)
+{
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+	struct v4l2_mbus_framefmt *fmt = v4l2_subdev_state_get_format(state, 0);
+
+	fmt->width = AR1335_WIDTH_MAX;
+	fmt->height = AR1335_HEIGHT_MAX;
+	ar1335_adj_fmt(sensor, fmt);
+
+	return 0;
+}
+
+static const struct v4l2_subdev_internal_ops ar1335_internal_ops = {
+	.init_state = ar1335_init_state,
+};
+
+static int ar1335_identify_module(struct ar1335_dev *sensor)
+{
+	struct device *dev = &sensor->i2c_client->dev;
+	u64 chip_id;
+	int ret;
+
+	ret = ar1335_read_reg(sensor, AR1335_REG_CHIP_ID, &chip_id);
+	if (ret) {
+		dev_err(dev, "Failed to read chip ID\n");
+		return ret;
+	}
+
+	if (chip_id != AR1335_CHIP_ID) {
+		dev_err(dev,
+			"Chip ID mismatch: expected 0x%04x, got 0x%04llx\n",
+			AR1335_CHIP_ID, chip_id);
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
+static int ar1335_get_regulators(struct ar1335_dev *sensor)
+{
+	unsigned int i;
+
+	for (i = 0; i < AR1335_NUM_SUPPLIES; i++)
+		sensor->supplies[i].supply = ar1335_supply_names[i];
+
+	return devm_regulator_bulk_get(&sensor->i2c_client->dev,
+				       AR1335_NUM_SUPPLIES, sensor->supplies);
+}
+
+static int ar1335_probe(struct i2c_client *client)
+{
+	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
+	struct device *dev = &client->dev;
+	struct fwnode_handle *endpoint;
+	struct ar1335_dev *sensor;
+	int ret;
+
+	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
+	if (!sensor)
+		return -ENOMEM;
+
+	sensor->i2c_client = client;
+
+	sensor->regmap = devm_cci_regmap_init_i2c(client, 16);
+	if (IS_ERR(sensor->regmap))
+		return dev_err_probe(dev, PTR_ERR(sensor->regmap),
+				     "Failed to init CCI regmap\n");
+
+	v4l2_i2c_subdev_init(&sensor->sd, client, &ar1335_subdev_ops);
+	sensor->sd.internal_ops = &ar1335_internal_ops;
+
+	/* Parse endpoint configuration */
+	endpoint = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0,
+						   FWNODE_GRAPH_ENDPOINT_NEXT);
+	if (!endpoint)
+		return dev_err_probe(dev, -EINVAL, "Endpoint node not found\n");
+
+	ret = v4l2_fwnode_endpoint_parse(endpoint, &ep);
+	fwnode_handle_put(endpoint);
+	if (ret)
+		return dev_err_probe(dev, ret, "Could not parse endpoint\n");
+
+	if (ep.bus_type != V4L2_MBUS_CSI2_DPHY)
+		return dev_err_probe(dev, -EINVAL,
+				     "Invalid bus type, must be MIPI CSI2\n");
+
+	sensor->lane_count = ep.bus.mipi_csi2.num_data_lanes;
+	switch (sensor->lane_count) {
+	case 1:
+	case 2:
+	case 4:
+		break;
+	default:
+		return dev_err_probe(dev, -EINVAL,
+				     "Invalid number of MIPI data lanes\n");
+	}
+
+	/* Get clock and regulators */
+	sensor->extclk = devm_clk_get(dev, "extclk");
+	if (IS_ERR(sensor->extclk))
+		return dev_err_probe(dev, PTR_ERR(sensor->extclk),
+				     "Failed to get extclk\n");
+
+	sensor->extclk_freq = clk_get_rate(sensor->extclk);
+	if (sensor->extclk_freq < AR1335_EXTCLK_MIN ||
+	    sensor->extclk_freq > AR1335_EXTCLK_MAX)
+		return dev_err_probe(dev, -EINVAL,
+				     "Extclk frequency out of range: %u Hz\n",
+				     sensor->extclk_freq);
+	ret = ar1335_get_regulators(sensor);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+
+	sensor->reset_gpio =
+		devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(sensor->reset_gpio))
+		return dev_err_probe(dev, PTR_ERR(sensor->reset_gpio),
+				     "Failed to get reset GPIO\n");
+
+	/* Power on and identify the sensor */
+	ret = ar1335_power_on(dev);
+	if (ret)
+		return dev_err_probe(dev, ret, "Failed to power on sensor\n");
+
+	ret = ar1335_identify_module(sensor);
+	if (ret)
+		goto error_power_off;
+	dev_info(dev, "Detected ON Semiconductor AR1335 sensor\n");
+
+	/* Initialize controls and subdev */
+	mutex_init(&sensor->lock);
+
+	ret = ar1335_init_controls(sensor);
+	if (ret)
+		goto error_mutex;
+
+	sensor->fmt.width = AR1335_WIDTH_MAX;
+	sensor->fmt.height = AR1335_HEIGHT_MAX;
+	ar1335_adj_fmt(sensor, &sensor->fmt);
+
+	sensor->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
+	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
+	sensor->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
+	sensor->sd.entity.ops = &ar1335_media_ops;
+
+	ret = media_entity_pads_init(&sensor->sd.entity, 1, &sensor->pad);
+	if (ret)
+		goto error_handler_free;
+
+	pm_runtime_set_autosuspend_delay(dev, 1000);
+	pm_runtime_use_autosuspend(dev);
+	pm_runtime_set_active(dev);
+	pm_runtime_enable(dev);
+	pm_runtime_idle(dev);
+
+	ret = v4l2_async_register_subdev_sensor(&sensor->sd);
+	if (ret)
+		goto error_pm;
+
+	return 0;
+
+error_pm:
+	pm_runtime_disable(dev);
+	pm_runtime_set_suspended(dev);
+	pm_runtime_dont_use_autosuspend(dev);
+	media_entity_cleanup(&sensor->sd.entity);
+error_handler_free:
+	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+error_mutex:
+	mutex_destroy(&sensor->lock);
+error_power_off:
+	ar1335_power_off(dev);
+	return ret;
+}
+
+static void ar1335_remove(struct i2c_client *client)
+{
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct ar1335_dev *sensor = to_ar1335_dev(sd);
+
+	v4l2_async_unregister_subdev(&sensor->sd);
+	media_entity_cleanup(&sensor->sd.entity);
+	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+
+	pm_runtime_disable(&client->dev);
+	if (!pm_runtime_status_suspended(&client->dev))
+		ar1335_power_off(&client->dev);
+	pm_runtime_set_suspended(&client->dev);
+	pm_runtime_dont_use_autosuspend(&client->dev);
+
+	mutex_destroy(&sensor->lock);
+}
+
+static const struct of_device_id ar1335_id[] = { { .compatible =
+							   "onnn,ar1335" },
+						 {} };
+MODULE_DEVICE_TABLE(of, ar1335_id);
+
+static struct i2c_driver ar1335_driver = {
+	.driver = {
+		.name  = AR1335_NAME,
+		.of_match_table = ar1335_id,
+		.pm = &ar1335_pm_ops,
+	},
+	.probe = ar1335_probe,
+	.remove = ar1335_remove,
+};
+
+module_i2c_driver(ar1335_driver);
+
+MODULE_AUTHOR("William Bright <william.bright@imd-tec.com>");
+MODULE_DESCRIPTION("ON Semiconductor AR1335 CMOS Image Sensor driver");
+MODULE_LICENSE("GPL v2");
