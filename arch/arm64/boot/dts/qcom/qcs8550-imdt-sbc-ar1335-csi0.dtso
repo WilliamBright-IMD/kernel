@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * QCS8550 IMDT SBC AR1335 CSI0 camera overlay
+ *
+ * Copyright (c) 2026 IMD Technologies Ltd
+ */
+
+#include <dt-bindings/clock/qcom,sm8550-camcc.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/dts-v1/;
+/plugin/;
+
+&tlmm {
+	ar1335_rst_default: ar1335-rst-default {
+		mux {
+			pins = "gpio116";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio116";
+			drive-strength = <16>;
+			bias-disable;
+		};
+	};
+};
+
+&camss {
+	status = "okay";
+
+	vdda-phy-supply = <&vreg_l1e_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+
+	ports {
+		port@0 {
+			csiphy0_ep: endpoint {
+				clock-lanes = <4>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&ar1335_ep>;
+			};
+		};
+
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci0_i2c0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	clock-frequency = <100000>;
+	ar1335: sensor@36 {
+		compatible = "onnn,ar1335";
+		reg = <0x36>;
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		clock-names = "extclk";
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		reset-gpios = <&tlmm 116 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam0_default &ar1335_rst_default>;
+
+		vdd_io-supply = <&cam_1v8_reg>;
+		vdd-supply = <&cam_1v2_reg>;
+		vaa-supply = <&hr_cam_pwr>;
+
+		orientation = <0>;	/* Front */
+		rotation = <0>;
+
+		port {
+			ar1335_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
+	};
+};
