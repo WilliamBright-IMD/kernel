@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 IMD Technologies Ltd
+ *
+ * There are two options for PCIe routing on the IMDT QCS8550 SBC.
+ * The PCIe switch SEL line (TLMM gpio16) selects GBE PHY routing when
+ * low (the default, driven by the pcie_switch_sel_default pinctrl
+ * state applied from pcie1's pinctrl-0) and M.2 Key B routing when
+ * high.
+ *
+ * This overlay reroutes PCIe1 to the M.2 Key B slot by replacing the
+ * SEL pinctrl state with one that drives the pin high. pcie1's
+ * pinctrl-0 is replaced wholesale because a devicetree overlay cannot
+ * delete the output-low property from the existing
+ * pcie_switch_sel_default state node; a gpio-hog is deliberately not
+ * used, as any hog setting is overridden by the pinctrl state pcie1
+ * applies later in boot, immediately before link training.
+ */
+/dts-v1/;
+/plugin/;
+
+&tlmm {
+	pcie_switch_sel_keyb: pcie-switch-sel-keyb-state {
+		pins = "gpio16";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&pcie1 {
+	pinctrl-0 = <&pcie1_default_state>,
+		    <&pcie_switch_sel_keyb>,
+		    <&gbe_reset_default>;
+};
