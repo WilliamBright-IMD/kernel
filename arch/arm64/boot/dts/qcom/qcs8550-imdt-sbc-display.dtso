@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 IMD Technologies Ltd
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/gpio/gpio.h>
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	vdda-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+
+	panel@0 {
+		compatible = "team-source-display,tst070wsbe-196c";
+		reg = <0>;
+
+		enable-gpios = <&tlmm 133 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-0 = <&panel_reset_default>;
+		pinctrl-names = "default";
+
+		power-supply = <&display_panel_pwr_en>;
+		backlight = <&backlight>;
+
+		port {
+			panel0_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dp0 {
+	status = "disabled";
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel0_in>;
+	data-lanes = <0 1 2 3>;
+	status = "okay";
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l1e_0p88>;
+	status = "okay";
+};
+
+&display_panel_pwr_en {
+	/* The panel power takes 300ms to come up */
+	startup-delay-us = <300000>;
+};
