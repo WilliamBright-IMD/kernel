@@ -15,149 +15,16 @@
 
 	aliases {
 		serial0 = &uart7;
-		serial1 = &uart14;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
 
-	backlight: backlight {
-		compatible = "gpio-backlight";
-		gpios = <&pm8550_gpios 6 GPIO_ACTIVE_HIGH>;
-		default-on;
-	};
-
-	cam_1v2_reg: regulator-cam-1v2 {
-		compatible = "regulator-fixed";
-		regulator-name = "cam_1v2_reg";
-		regulator-min-microvolt = <1200000>;
-		regulator-max-microvolt = <1200000>;
-		vin-supply = <&hr_cam_pwr>;
-	};
-
-	cam_1v8_reg: regulator-cam-1v8 {
-		compatible = "regulator-fixed";
-		regulator-name = "cam_1v8_reg";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		vin-supply = <&hr_cam_pwr>;
-	};
-
-	cam_2v8_reg: regulator-cam-2v8 {
-		compatible = "regulator-fixed";
-		regulator-name = "cam_2v8_reg";
-		regulator-min-microvolt = <2800000>;
-		regulator-max-microvolt = <2800000>;
-		vin-supply = <&hr_cam_pwr>;
-	};
-
-	cam_3v3_reg: regulator-cam-3v3 {
-		compatible = "regulator-fixed";
-		regulator-name = "cam_3v3_reg";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		vin-supply = <&hr_cam_pwr>;
-	};
-
-	display_panel_pwr_en: regulator-display-panel-en {
-		compatible = "regulator-fixed";
-		regulator-name = "display_panel_pwr_en";
-		regulator-min-microvolt = <8000000>;
-		regulator-max-microvolt = <8000000>;
-		startup-delay-us = <10000>;
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&panel_en_default>;
-
-		gpio = <&tlmm 123 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-
-		vin-supply = <&som_vph_pwr>;
-	};
-
-	/* 5V VIN to backlight LED driver PMIC */
-	dsi_5v_en: regulator-dsi-5v-en {
-		compatible = "regulator-fixed";
-		regulator-name = "dsi_5v_en";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&dsi_5v_en_default>;
-
-		gpio = <&tlmm 140 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-
-		vin-supply = <&som_vph_pwr>;
-
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	/* Enables 1V2, 1V8_CAM and 3V3_CAM */
-	hr_cam_pwr: regulator-hr-cam-pwr {
-		compatible = "regulator-fixed";
-		regulator-name = "hr_cam_pwr";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&hr_cam_en_default>;
-
-		gpio = <&tlmm 146 GPIO_ACTIVE_LOW>;
-
-		vin-supply = <&som_vph_pwr>;
-
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	/* Enables V2MB_3V8 and V2ME_3V3 */
-	m2_pd_pwr: regulator-m2-pd-pwr {
-		compatible = "regulator-fixed";
-		regulator-name = "m2_pd_pwr";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&m2_pd_en_default>;
-
-		gpio = <&tlmm 144 GPIO_ACTIVE_LOW>;
-
-		vin-supply = <&som_vph_pwr>;
-
-		regulator-always-on;
-		regulator-boot-on;
-
-		gpio-open-drain;
-	};
-
-	per_1v8_reg: regulator-per-1v8 {
-		compatible = "regulator-fixed";
-		regulator-name = "per_1v8_reg";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		vin-supply = <&per_pwr>;
-	};
-
-	per_3v3_reg: regulator-per-3v3 {
-		compatible = "regulator-fixed";
-		regulator-name = "per_3v3_reg";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		vin-supply = <&per_pwr>;
-	};
-
-	per_5v_reg: regulator-per-5v {
-		compatible = "regulator-fixed";
-		regulator-name = "per_5v_reg";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		vin-supply = <&per_pwr>;
-	};
-
-	/* Enables 5V_PER, 3V3_PER and 1V8_PER */
+	/* Enables 5V_PER, 3V3_PER and 1V8_PER rails.
+	 * These rails aren't used by anything within the device-tree
+	 * but are used for logic level conversion and as rails for pull-ups.
+	 */
 	per_pwr: regulator-per-pwr {
 		compatible = "regulator-fixed";
 		regulator-name = "per_pwr";
@@ -169,8 +36,6 @@
 
 		gpio = <&tlmm 142 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
-
-		vin-supply = <&som_vph_pwr>;
 
 		regulator-always-on;
 		regulator-boot-on;
@@ -197,24 +62,6 @@
 		startup-delay-us = <10000>;
 	};
 
-	sdhci_4_vqmmc: regulator-sdhci-4-vqmmc {
-		compatible = "regulator-fixed";
-		regulator-name = "sdhci_4_vqmmc";
-		regulator-min-microvolt = <1800000>;
-		regulator-max-microvolt = <1800000>;
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	som_vph_pwr: regulator-som-vph-pwr {
-		compatible = "regulator-fixed";
-		regulator-name = "som_vph_pwr";
-		regulator-min-microvolt = <3900000>;
-		regulator-max-microvolt = <3900000>;
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
 	vph_pwr: regulator-vph-pwr {
 		compatible = "regulator-fixed";
 		regulator-name = "vph_pwr";
@@ -222,36 +69,6 @@
 		regulator-max-microvolt = <3700000>;
 		regulator-always-on;
 		regulator-boot-on;
-	};
-
-	vsys_sd_3v3_reg: regulator-vsys-sd-3v3 {
-		compatible = "regulator-fixed";
-		regulator-name = "vsys_sd_3v3_reg";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	vsys_wlan_3v3_reg: regulator-vsys-wlan-3v3 {
-		compatible = "regulator-fixed";
-		regulator-name = "vsys_wlan_3v3_reg";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		regulator-always-on;
-		regulator-boot-on;
-	};
-
-	wifi_pwrseq: wifi-pwrseq {
-		compatible = "mmc-pwrseq-simple";
-		/*
-		 * NXP IW416 chip enables: PMIC_EN (master) and WLAN_EN.
-		 * Held asserted (low) before SDHC4 powers up, then
-		 * released after vmmc/vqmmc are stable.
-		 */
-		reset-gpios = <&tlmm 19 GPIO_ACTIVE_LOW>,
-			      <&tlmm 5 GPIO_ACTIVE_LOW>;
-		post-power-on-delay-ms = <50>;
 	};
 };
 
@@ -326,30 +143,6 @@
 
 &iris {
 	status = "okay";
-};
-
-&lpass_rxmacro {
-	status = "disabled";
-};
-
-&lpass_tlmm {
-	status = "disabled";
-};
-
-&lpass_txmacro {
-	status = "disabled";
-};
-
-&lpass_vamacro {
-	status = "disabled";
-};
-
-&lpass_wsa2macro {
-	status = "disabled";
-};
-
-&lpass_wsamacro {
-	status = "disabled";
 };
 
 &pcie0 {
@@ -428,17 +221,6 @@
 	};
 };
 
-&pmk8550_gpios {
-	pmk8550_sleep_clk: sleep-clk-state {
-		pins = "gpio3";
-		function = "func1";
-		input-disable;
-		output-enable;
-		bias-disable;
-		power-source = <1>; /* 1.8 V */
-	};
-};
-
 &pon_pwrkey {
 	status = "okay";
 };
@@ -469,12 +251,6 @@
 	status = "okay";
 };
 
-&remoteproc_mpss {
-	firmware-name = "qcom/sm8550/modem.mbn",
-			"qcom/sm8550/modem_dtb.mbn";
-	status = "okay";
-};
-
 &sdc2_default {
 	clk-pins {
 		drive-strength = <16>;
@@ -500,7 +276,6 @@
 	pinctrl-1 = <&sdc2_default>, <&sd_card_detect_default>;
 	pinctrl-names = "default", "sleep";
 
-	vmmc-supply = <&vsys_sd_3v3_reg>;
 	vqmmc-supply = <&sdhci_2_vqmmc>;
 
 	bus-width = <4>;
@@ -514,95 +289,17 @@
 	/* Reserved I/Os for NFC */
 	gpio-reserved-ranges = <32 8>;
 
-	bt_default: bt-default-state {
-		bt-en-pins {
-			pins = "gpio81";
-			function = "gpio";
-			drive-strength = <16>;
-			bias-disable;
-		};
-
-		sw-ctrl-pins {
-			pins = "gpio82";
-			function = "gpio";
-			bias-pull-down;
-		};
-	};
-
-	dsi_5v_en_default: dsi-5v-en-default-state {
-		pins = "gpio140";
-		function = "gpio";
-		drive-strength = <8>;
-		bias-pull-down;
-	};
-
-	goodix_int_default: goodix-int-default-state {
-		goodix-int-pins {
-			pins = "gpio88";
-			function = "gpio";
-			bias-disable;
-		};
-	};
-
-	goodix_reset_default: goodix-reset-default-state {
-		goodix-reset-pins {
-			pins = "gpio122";
-			function = "gpio";
-			drive-strength = <8>;
-			drive-open-drain;
-			bias-disable;
-		};
-	};
-
-	hr_cam_en_default: hr-cam-en-default-state {
-		hr-cam-en-pins {
-			pins = "gpio146";
-			function = "gpio";
-			drive-strength = <16>;
-		};
-	};
-
-	lt9611_irq_pin: lt9611-irq-state {
-		pins = "gpio8";
-		function = "gpio";
-		bias-disable;
-	};
-
-	lt9611_rst_pin: lt9611-rst-state {
-		pins = "gpio7";
-		function = "gpio";
-		output-high;
-	};
-
-	m2_pd_en_default: m2-pd-en-default-state {
-		m2-pd-en-pins {
-			pins = "gpio144";
-			function = "gpio";
-			drive-strength = <16>;
-			drive-open-drain;
-		};
-	};
-
-	panel_en_default: panel-en-default-state {
-		pins = "gpio123";
-		function = "gpio";
-		drive-strength = <8>;
-		bias-pull-down;
-	};
-
-	panel_reset_default: panel-reset-default-state {
-		pins = "gpio133";
-		function = "gpio";
-		drive-strength = <8>;
-		bias-disable;
-		drive-open-drain;
-	};
-
+	/* This pin enables the following on-board regs:
+	 *	1V8_PER
+	 *	3V3_PER
+	 *	5V_PER
+	 */
 	pwr_per_en_default: pwr-per-en-default-state {
 		pwr-per-en-pins {
 			pins = "gpio142";
 			function = "gpio";
 			drive-strength = <16>;
+			bias-disable;
 		};
 	};
 
@@ -610,131 +307,19 @@
 		sd-vset-pins {
 			pins = "gpio4";
 			function = "gpio";
-			bias-disable;
 			drive-strength = <16>;
-		};
-	};
-
-	sdc4_default: sdc4-default-state {
-		clk-pins {
-			pins = "gpio50";
-			function = "sdc4_clk";
 			bias-disable;
-			drive-strength = <16>;
 		};
-
-		cmd-pins {
-			pins = "gpio51";
-			function = "sdc4_cmd";
-			bias-disable;
-			drive-strength = <16>;
-		};
-
-		data0-pins {
-			pins = "gpio89";
-			function = "sdc40";
-			bias-disable;
-			drive-strength = <16>;
-		};
-
-		data1-pins {
-			pins = "gpio90";
-			function = "sdc41";
-			bias-disable;
-			drive-strength = <16>;
-		};
-
-		data2-pins {
-			pins = "gpio48";
-			function = "sdc42";
-			bias-disable;
-			drive-strength = <16>;
-		};
-
-		data3-pins {
-			pins = "gpio49";
-			function = "sdc43";
-			bias-disable;
-			drive-strength = <16>;
-		};
-	};
-
-	sdc4_sleep: sdc4-sleep-state {
-		clk-pins {
-			pins = "gpio50";
-			function = "sdc4_clk";
-			bias-disable;
-			drive-strength = <2>;
-		};
-
-		cmd-pins {
-			pins = "gpio51";
-			function = "sdc4_cmd";
-			bias-disable;
-			drive-strength = <2>;
-		};
-
-		data0-pins {
-			pins = "gpio89";
-			function = "sdc40";
-			bias-disable;
-			drive-strength = <2>;
-		};
-
-		data1-pins {
-			pins = "gpio90";
-			function = "sdc41";
-			bias-disable;
-			drive-strength = <2>;
-		};
-
-		data2-pins {
-			pins = "gpio48";
-			function = "sdc42";
-			bias-disable;
-			drive-strength = <2>;
-		};
-
-		data3-pins {
-			pins = "gpio49";
-			function = "sdc43";
-			bias-disable;
-			drive-strength = <2>;
-		};
-	};
-
-	wcd_default: wcd-reset-n-active-state {
-		pins = "gpio108";
-		function = "gpio";
-		drive-strength = <16>;
-		bias-disable;
-		output-low;
-	};
-
-	wlan_en: wlan-en-state {
-		pins = "gpio80";
-		function = "gpio";
-		drive-strength = <8>;
-		bias-pull-down;
-	};
-
-	audio-speaker-dac-reset-default-state {
-		pins = "gpio171";
-		function = "gpio";
-		drive-strength = <2>;
-		drive-open-drain;
 	};
 
 	/*
 	 * Drive LAN743x reset high (de-asserted) when pcie1 probes,
-	 * so the PHY enumerates on the bus. Open-drain matches the
-	 * board's external pull-up on the reset line.
+	 * so the PHY enumerates on the bus.
 	 */
 	gbe_reset_default: gbe-reset-default-state {
 		pins = "gpio138";
 		function = "gpio";
 		drive-strength = <2>;
-		drive-open-drain;
 		bias-disable;
 		output-high;
 	};
@@ -764,24 +349,6 @@
 
 &uart7 {
 	status = "okay";
-};
-
-&uart14 {
-	status = "okay";
-
-	/*
-	 * NXP IW416 WiFi+BT combo, BT side over UART. The btnxpuart
-	 * driver auto-detects the chip ID at runtime; the upstream
-	 * binding only enumerates 88w8987/8997 compatibles, so use
-	 * the closest match until an iw416-bt compatible is added.
-	 */
-	bluetooth {
-		compatible = "nxp,88w8987-bt";
-		fw-init-baudrate = <115200>;
-		max-speed = <3000000>;
-		firmware-name = "uartiw416_bt.bin";
-		reset-gpios = <&tlmm 160 GPIO_ACTIVE_LOW>;
-	};
 };
 
 &ufs_mem_hc {
