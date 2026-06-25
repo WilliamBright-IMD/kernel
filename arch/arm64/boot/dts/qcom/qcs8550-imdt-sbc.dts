@@ -290,8 +290,7 @@
 
 &gpu_zap_shader {
 	firmware-name = "qcom/sm8550/a740_zap.mbn";
-	/* Zap shader doesn't load so is disabled */
-	status = "disabled";
+	status = "okay";
 };
 
 &i2c_master_hub_0 {
