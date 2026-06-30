@@ -54,6 +54,6 @@
 };
 
 &display_panel_pwr_en {
-	/* The panel power takes 300ms to come up */
-	startup-delay-us = <300000>;
+	/* Allow the panel power rail to settle before releasing reset */
+	startup-delay-us = <30000>;
 };
