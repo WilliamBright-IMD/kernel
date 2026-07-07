@@ -208,6 +208,8 @@ qcs615-ride-el2-dtbs := qcs615-ride.dtb talos-el2.dtbo
 
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs615-ride-el2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= talos-el2.dtbo
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-imdt-sbc.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-imdt-sbc-pcie-keyb.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-radxa-dragon-q6a.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-rb3gen2.dtb
 qcs6490-rb3gen2-el2-dtbs := qcs6490-rb3gen2.dtb kodiak-el2.dtbo
