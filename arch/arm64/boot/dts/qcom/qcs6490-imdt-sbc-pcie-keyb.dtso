@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 IMD Technologies Ltd
+ *
+ * There are two options for PCIe routing on the IMDT QCS6490 SBC.
+ * By default, the CBTU02044 PCIe mux is configured to route to the GBE
+ * PHY, but this can be changed to route to the M.2 slot Key B by
+ * driving the mux select line (GPIO_115) low.
+ */
+/dts-v1/;
+/plugin/;
+
+&pcie1 {
+	pinctrl-0 = <&pcie1_clkreq_n>,
+		    <&pcie1_reset_n>,
+		    <&pcie1_wake_n>,
+		    <&pcie_switch_sel_keyb>;
+};

@@ -403,6 +403,12 @@ properties:
               - thundercomm,rubikpi3
           - const: qcom,qcm6490
 
+      - items:
+          - enum:
+              - imdt,qcs6490-sbc
+          - const: imdt,qcs6490-som
+          - const: qcom,qcm6490
+
       - description: Qualcomm Technologies, Inc. Distributed Unit 1000 platform
         items:
           - enum:
