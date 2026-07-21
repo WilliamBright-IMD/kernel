@@ -12,7 +12,7 @@
 #include "pmk8550.dtsi"
 
 &apps_rsc {
-	regulators-0 {
+	pm8550_rpmh_regulators: regulators-0 {
 		compatible = "qcom,pm8550-rpmh-regulators";
 		qcom,pmic-id = "b";
 
@@ -79,7 +79,7 @@
 		};
 	};
 
-	regulators-1 {
+	pm8550vs_c_rpmh_regulators: regulators-1 {
 		compatible = "qcom,pm8550vs-rpmh-regulators";
 		qcom,pmic-id = "c";
 
@@ -98,7 +98,7 @@
 		};
 	};
 
-	regulators-2 {
+	pm8550vs_d_rpmh_regulators: regulators-2 {
 		compatible = "qcom,pm8550vs-rpmh-regulators";
 		qcom,pmic-id = "d";
 
@@ -119,7 +119,7 @@
 		/* ldo2 supplies SM8550 VDD_LPI_MX */
 	};
 
-	regulators-3 {
+	pm8550vs_e_rpmh_regulators: regulators-3 {
 		compatible = "qcom,pm8550vs-rpmh-regulators";
 		qcom,pmic-id = "e";
 
@@ -172,7 +172,7 @@
 		};
 	};
 
-	regulators-4 {
+	pm8550ve_rpmh_regulators: regulators-4 {
 		compatible = "qcom,pm8550ve-rpmh-regulators";
 		qcom,pmic-id = "f";
 
@@ -218,7 +218,7 @@
 		};
 	};
 
-	regulators-5 {
+	pm8550vs_g_rpmh_regulators: regulators-5 {
 		compatible = "qcom,pm8550vs-rpmh-regulators";
 		qcom,pmic-id = "g";
 
@@ -295,10 +295,6 @@
 };
 
 &pm8550vs_d {
-	status = "okay";
-};
-
-&pm8550vs_d_gpios {
 	status = "okay";
 };
 
