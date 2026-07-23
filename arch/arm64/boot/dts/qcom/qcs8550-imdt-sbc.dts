@@ -26,19 +26,15 @@
 		vpcie3v3-supply = <&m2e_3p3>;
 		vpcie1v8-supply = <&per_pwr>;
 		w-disable1-gpios = <&tlmm 80 GPIO_ACTIVE_LOW>;
-		w-disable2-gpios = <&tlmm 81 GPIO_ACTIVE_LOW>;
-		uart-wake-gpios = <&tlmm 206 GPIO_ACTIVE_LOW>;
-		sdio-reset-gpios = <&tlmm 41 GPIO_ACTIVE_LOW>;
 
-		pinctrl-0 = <&m2e_bt_disable>, <&m2e_sdio_resetn_default>,
-			    <&m2e_uart_wake>, <&m2e_wlan_disable>;
+		pinctrl-0 = <&m2e_wlan_disable>;
 		pinctrl-names = "default";
 
 		/* SDIO datapath is disabled because the SDIO lines are
-		 * routed through unpopulated resistors. UART datapath
-		 * is also disabled as the UART lines are routed through
-		 * an analogue mux which currently cannot be described
-		 * by the DT.
+		 * routed through unpopulated resistors. 
+		 * UART datapath is also disabled as the UART lines are
+		 * routed through an analogue mux which currently cannot
+		 * be described by a device tree.
 		 */
 		ports {
 			#address-cells = <1>;
@@ -49,9 +45,9 @@
 				#address-cells = <1>;
 				#size-cells = <0>;
 
-				endpoint@0 {
+				m2e_pcie_ep: endpoint@0 {
 					reg = <0>;
-					remote-endpoint = <&pcie0_port0>;
+					remote-endpoint = <&pcie0_port0_ep>;
 				};
 			};
 		};
@@ -177,6 +173,11 @@
 };
 
 &pcie0 {
+	/* Gen1 (2.5 GT/s): the link fails to complete training at higher
+	 * speeds on this board.
+	 */
+	max-link-speed = <1>;
+
 	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
 	perst-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
 
@@ -191,6 +192,17 @@
 	vdda-pll-supply = <&vreg_l3e_1p2>;
 
 	status = "okay";
+};
+
+&pcie0_port0 {
+	/* Required for pwrctrl driver bind */
+	compatible = "pciclass,0604";
+
+	port {
+		pcie0_port0_ep: endpoint {
+			remote-endpoint = <&m2e_pcie_ep>;
+		};
+	};
 };
 
 &pm8550_gpios {
@@ -317,28 +329,6 @@
 		function = "gpio";
 		drive-strength = <16>;
 		drive-open-drain;
-	};
-
-	m2e_bt_disable: m2e-bt-disable-default-state {
-		pins = "gpio81";
-		function = "gpio";
-		drive-strength = <2>;
-		bias-disable;
-	};
-
-	m2e_sdio_resetn_default: m2e-sdio-resetn-default-state {
-		pins = "gpio41";
-		function = "gpio";
-		drive-strength = <2>;
-		bias-disable;
-		output-high;
-	};
-
-	m2e_uart_wake: m2e-uart-wake-default-state {
-		pins = "gpio206";
-		function = "gpio";
-		drive-strength = <2>;
-		bias-disable;
 	};
 
 	m2e_wlan_disable: m2e-wlan-disable-default-state {
