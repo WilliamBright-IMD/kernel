@@ -632,6 +632,17 @@
 
 /* On-SoM 32 GB eMMC */
 &sdhc_1 {
+	/*
+	 * This board boots from eMMC, not UFS. UEFI's CryptoDxe only fixes up
+	 * (unlocks) the UFS inline-crypto engine -- the boot log shows
+	 * "CryptoDxeFixupEventNotifyFunc: ufs node not found in device tree" --
+	 * so the SDCC1 ICE at 0x7c8000 is left owned by TrustZone. When the HLOS
+	 * sdhci-msm driver then touches the ICE the SoC takes an immediate
+	 * warm reset during probe. We have no need for inline storage encryption
+	 * here, so detach the ICE from the controller.
+	 */
+	/delete-property/ qcom,ice;
+
 	vmmc-supply = <&vreg_l7b_2p952>;
 	vqmmc-supply = <&vreg_l19b_1p8>;
 
