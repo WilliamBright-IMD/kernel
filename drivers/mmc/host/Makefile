@@ -113,5 +113,8 @@ ifeq ($(CONFIG_CB710_DEBUG),y)
 	CFLAGS-cb710-mmc	+= -DDEBUG
 endif
 
+CFLAGS_sdhci-msm.o	+= -DDEBUG
+CFLAGS_sdhci.o		+= -DDEBUG
+
 obj-$(CONFIG_MMC_SDHCI_XENON)	+= sdhci-xenon-driver.o
 sdhci-xenon-driver-y		+= sdhci-xenon.o sdhci-xenon-phy.o

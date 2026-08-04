@@ -3666,17 +3666,32 @@
 			max-sd-hs-hz = <37500000>;
 			dma-coherent;
 
-			/* Forbid SDR104/SDR50 broken hw! */
-			sdhci-caps-mask = <0x3 0>;
+			/* Forbid SDR104 */
+			sdhci-caps-mask = <0x2 0>;
 
 			status = "disabled";
 
 			sdhc4_opp_table: opp-table {
 				compatible = "operating-points-v2";
 
-				opp-75000000 {
-					opp-hz = /bits/ 64 <75000000>;
+				opp-400000 {
+					opp-hz = /bits/ 64 <400000>;
+					required-opps = <&rpmhpd_opp_min_svs>;
+				};
+
+				opp-25000000 {
+					opp-hz = /bits/ 64 <25000000>;
+					required-opps = <&rpmhpd_opp_min_svs>;
+				};
+
+				opp-37500000 {
+					opp-hz = /bits/ 64 <37500000>;
 					required-opps = <&rpmhpd_opp_low_svs>;
+				};
+
+				opp-75000000 {
+					opp-hz = /bits/ 64 <75000000>;	/* SDR50 clock rate */
+					required-opps = <&rpmhpd_opp_svs>;
 				};
 			};
 		};

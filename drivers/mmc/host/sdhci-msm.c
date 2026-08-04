@@ -1149,6 +1149,7 @@ static bool sdhci_msm_is_tuning_needed(struct sdhci_host *host)
 {
 	struct mmc_ios *ios = &host->mmc->ios;
 
+	/* SDR50 at 75MHz on fixed-1.8V path requires tuning */
 	if (ios->timing == MMC_TIMING_UHS_SDR50 &&
 	    host->flags & SDHCI_SDR50_NEEDS_TUNING)
 		return true;
