@@ -2051,10 +2051,16 @@ static void ucsi_init_work(struct work_struct *work)
 	int ret;
 
 	ret = ucsi_init(ucsi);
-	if (ret)
+	if (ret) {
 		dev_err_probe(ucsi->dev, ret, "PPM init failed\n");
 
-	if (ret == -EPROBE_DEFER) {
+		/*
+		 * Retry on any error, not just -EPROBE_DEFER. A CCGx PPM can
+		 * transiently fail init - it reports -EBUSY while servicing a
+		 * VDM exchange with a port partner, and a PPM reset can take
+		 * longer than the command timeout - but a later attempt
+		 * succeeds.
+		 */
 		if (ucsi->work_count++ > UCSI_ROLE_SWITCH_WAIT_COUNT) {
 			dev_err(ucsi->dev, "PPM init failed, stop trying\n");
 			return;
