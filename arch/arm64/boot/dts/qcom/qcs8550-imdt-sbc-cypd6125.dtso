@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2026 IMD Technologies Ltd
+ *
+ * Enable the Cypress/Infineon CYPD6125 USB PD controller as the
+ * USB Type-C port manager for usb_1. The CYPD6125 runs CCGx UCSI
+ * firmware and reports connector events (attach/detach, cable
+ * orientation, data role) over I2C, letting usb_1 switch between
+ * host and device mode at runtime instead of being pinned to
+ * peripheral mode.
+ *
+ * The controller sits at address 0x08 on the I2C hub bus 2 with
+ * its host interrupt on TLMM gpio10, matching the Envoid
+ * Enportable carrier wiring this overlay was ported from.
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&i2c_hub_2 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	typec@8 {
+		/*
+		 * The CYPD6125 runs standard CCGx UCSI firmware, so the
+		 * cypd4226 UCSI driver handles it unmodified.
+		 */
+		compatible = "cypress,cypd4226";
+		reg = <0x08>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <10 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-0 = <&ccg_irq_default>;
+		pinctrl-names = "default";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		connector@0 {
+			compatible = "usb-c-connector";
+			reg = <0>;
+			label = "USB-C";
+			power-role = "dual";
+			data-role = "dual";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					cypd6125_hs_in: endpoint {
+						remote-endpoint = <&usb_1_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					cypd6125_ss_in: endpoint {
+						remote-endpoint = <&usb_dp_qmpphy_out>;
+					};
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	ccg_irq_default: ccg-irq-default-state {
+		pins = "gpio10";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
+	};
+};
+
+&usb_1 {
+	/*
+	 * The base board file pins usb_1 to peripheral mode and drops
+	 * its role switch; with the CYPD6125 managing the port, restore
+	 * OTG so the UCSI connector events drive host/device switching.
+	 */
+	dr_mode = "otg";
+	usb-role-switch;
+
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&cypd6125_hs_in>;
+};
+
+&usb_dp_qmpphy_out {
+	remote-endpoint = <&cypd6125_ss_in>;
+};

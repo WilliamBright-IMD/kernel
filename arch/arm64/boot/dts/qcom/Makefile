@@ -196,6 +196,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-imdt-sbc.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-imdt-sbc-display.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-imdt-sbc-ar1335-csi0.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-imdt-sbc-pcie-keyb.dtbo
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-imdt-sbc-cypd6125.dtbo
 
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride-r3.dtb
