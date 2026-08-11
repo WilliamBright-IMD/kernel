@@ -2136,8 +2136,11 @@ static int ucsi_init(struct ucsi *ucsi)
 	mutex_unlock(&ucsi->ppm_lock);
 	if (ret)
 		return ret;
-	if (UCSI_CCI_CONNECTOR(cci))
-		ucsi_connector_change(ucsi, UCSI_CCI_CONNECTOR(cci));
+
+	for (i = 0; i < ucsi->cap.num_connectors; i++)
+		if (UCSI_CONSTAT(&connector[i], CONNECTED) ||
+		    UCSI_CCI_CONNECTOR(cci) == i + 1)
+			ucsi_connector_change(ucsi, i + 1);
 
 	return 0;
 
