@@ -71,6 +71,14 @@
 	};
 };
 
+&mdss {
+	status = "okay";
+};
+
+&mdss_dp0 {
+	status = "okay";
+};
+
 &tlmm {
 	ccg_irq_default: ccg-irq-default-state {
 		pins = "gpio10";
@@ -82,14 +90,8 @@
 };
 
 &usb_1 {
-	/*
-	 * The base board file pins usb_1 to peripheral mode and drops
-	 * its role switch; with the CYPD6125 managing the port, restore
-	 * OTG so the UCSI connector events drive host/device switching.
-	 */
 	dr_mode = "otg";
 	usb-role-switch;
-
 };
 
 &usb_1_dwc3_hs {
