@@ -8,6 +8,7 @@
  * Some code borrowed from drivers/usb/typec/ucsi/ucsi_acpi.c
  */
 #include <linux/acpi.h>
+#include <linux/auxiliary_bus.h>
 #include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
@@ -18,7 +19,10 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/usb/typec_dp.h>
+
+#include <drm/bridge/aux-bridge.h>
 
 #include <linux/unaligned.h>
 #include "ucsi.h"
@@ -249,7 +253,26 @@ struct ucsi_ccg {
 
 	/* the UCSI interface is only brought up once valid FW is running */
 	bool device_registered;
+
+	/*
+	 * DP HPD bridge for the connector. The DP controller reaches the
+	 * connector through the combo PHY's transparent bridge, which needs
+	 * a bridge registered against the connector node to link to.
+	 */
+	struct auxiliary_device *bridge;
+	struct delayed_work hpd_work;
+	enum drm_connector_status hpd_status;
+	int hpd_retries;
 };
+
+/*
+ * The HPD bridge only forwards events once the DP controller has enabled HPD
+ * on it, and it has no .detect for the DP controller to fall back on. This
+ * driver probes well before the DRM device is up, so the first notification
+ * for a display attached at boot is dropped - re-assert it a few times.
+ */
+#define UCSI_CCG_HPD_RETRIES		3
+#define UCSI_CCG_HPD_RETRY_DELAY_MS	4000
 
 static int ccg_read(struct ucsi_ccg *uc, u16 rab, u8 *data, u32 len)
 {
@@ -410,6 +433,52 @@ static void ucsi_ccg_update_get_current_cam_cmd(struct ucsi_ccg *uc, u8 *data)
 	data[0] = new_cam;
 }
 
+static void ucsi_ccg_hpd_notify(struct ucsi_ccg *uc,
+				enum drm_connector_status status)
+{
+	if (!uc->bridge)
+		return;
+
+	dev_dbg(uc->dev, "HPD: %s\n",
+		status == connector_status_connected ? "connected" : "disconnected");
+
+	uc->hpd_status = status;
+	uc->hpd_retries = UCSI_CCG_HPD_RETRIES;
+
+	drm_aux_hpd_bridge_notify(&uc->bridge->dev, status);
+	mod_delayed_work(system_dfl_wq, &uc->hpd_work,
+			 msecs_to_jiffies(UCSI_CCG_HPD_RETRY_DELAY_MS));
+}
+
+static void ucsi_ccg_hpd_work(struct work_struct *work)
+{
+	struct ucsi_ccg *uc = container_of(work, struct ucsi_ccg, hpd_work.work);
+
+	drm_aux_hpd_bridge_notify(&uc->bridge->dev, uc->hpd_status);
+
+	if (--uc->hpd_retries > 0)
+		queue_delayed_work(system_dfl_wq, &uc->hpd_work,
+				   msecs_to_jiffies(UCSI_CCG_HPD_RETRY_DELAY_MS));
+}
+
+/*
+ * The DP controller only starts link training once the connector's HPD bridge
+ * reports a sink. The CCGx firmware negotiates DP alt mode on its own without
+ * telling us when it does, so take the partner advertising the DP SID as the
+ * sink being there.
+ */
+static void ucsi_ccg_hpd_update(struct ucsi_ccg *uc, struct ucsi_altmode *alt)
+{
+	int i;
+
+	for (i = 0; i < UCSI_MAX_ALTMODES && alt[i].svid; i++) {
+		if (alt[i].svid == USB_TYPEC_DP_SID) {
+			ucsi_ccg_hpd_notify(uc, connector_status_connected);
+			return;
+		}
+	}
+}
+
 static bool ucsi_ccg_update_altmodes(struct ucsi *ucsi,
 				     u8 recipient,
 				     struct ucsi_altmode *orig,
@@ -419,6 +488,9 @@ static bool ucsi_ccg_update_altmodes(struct ucsi *ucsi,
 	struct ucsi_ccg_altmode *alt, *new_alt;
 	int i, j, k = 0;
 	bool found = false;
+
+	if (recipient == UCSI_RECIPIENT_SOP)
+		ucsi_ccg_hpd_update(uc, orig);
 
 	if (recipient != UCSI_RECIPIENT_CON)
 		return false;
@@ -715,9 +787,10 @@ static void ucsi_ccg_connector_status(struct ucsi_connector *con)
 	if (ret)
 		return;
 
-	if (!(typec_status & PORT_PARTNER_CONNECTED))
+	if (!(typec_status & PORT_PARTNER_CONNECTED)) {
 		typec_set_orientation(con->port, TYPEC_ORIENTATION_NONE);
-	else if (typec_status & CC_POLARITY_CC2)
+		ucsi_ccg_hpd_notify(uc, connector_status_disconnected);
+	} else if (typec_status & CC_POLARITY_CC2)
 		typec_set_orientation(con->port, TYPEC_ORIENTATION_REVERSE);
 	else
 		typec_set_orientation(con->port, TYPEC_ORIENTATION_NORMAL);
@@ -1151,11 +1224,19 @@ static int ccg_start(struct ucsi_ccg *uc)
 		goto out_free_irq;
 	}
 
+	if (uc->bridge) {
+		status = devm_drm_dp_hpd_bridge_add(uc->dev, uc->bridge);
+		if (status)
+			goto out_ucsi_unregister;
+	}
+
 	pm_runtime_enable(uc->dev);
 	pm_runtime_idle(uc->dev);
 
 	return 0;
 
+out_ucsi_unregister:
+	ucsi_unregister(uc->ucsi);
 out_free_irq:
 	free_irq(uc->irq, uc);
 out_ucsi_destroy:
@@ -1617,6 +1698,7 @@ static int ucsi_ccg_probe(struct i2c_client *client)
 	mutex_init(&uc->lock);
 	INIT_WORK(&uc->work, ccg_update_firmware);
 	INIT_WORK(&uc->pm_work, ccg_pm_workaround_work);
+	INIT_DELAYED_WORK(&uc->hpd_work, ucsi_ccg_hpd_work);
 
 	/* Only fail FW flashing when FW build information is not provided */
 	status = device_property_read_string(dev, "firmware-name", &fw_name);
@@ -1640,6 +1722,22 @@ static int ucsi_ccg_probe(struct i2c_client *client)
 	if (uc->info.mode & CCG_DEVINFO_PDPORTS_MASK)
 		uc->port_num++;
 
+	/*
+	 * Give the connector a DP HPD bridge. Without one the transparent
+	 * bridge the combo PHY registers has nothing to link to, and both it
+	 * and the DP controller sit in deferred probe forever.
+	 */
+	device_for_each_child_node_scoped(dev, fwnode) {
+		u32 port;
+
+		if (fwnode_property_read_u32(fwnode, "reg", &port) || port != 0)
+			continue;
+
+		uc->bridge = devm_drm_dp_hpd_bridge_alloc(dev, to_of_node(fwnode));
+		if (IS_ERR(uc->bridge))
+			return PTR_ERR(uc->bridge);
+	}
+
 	i2c_set_clientdata(client, uc);
 
 	device_disable_async_suspend(uc->dev);
@@ -1662,6 +1760,7 @@ static void ucsi_ccg_remove(struct i2c_client *client)
 {
 	struct ucsi_ccg *uc = i2c_get_clientdata(client);
 
+	cancel_delayed_work_sync(&uc->hpd_work);
 	cancel_work_sync(&uc->pm_work);
 	cancel_work_sync(&uc->work);
 
