@@ -1892,7 +1892,9 @@ static u64 ucsi_get_supported_notifications(struct ucsi *ucsi)
 static int ucsi_init(struct ucsi *ucsi)
 {
 	struct ucsi_connector *con, *connector;
+	unsigned long change_mask;
 	u64 command, ntfy;
+	unsigned int bit;
 	u32 cci;
 	int ret;
 	int i;
@@ -1962,8 +1964,13 @@ static int ucsi_init(struct ucsi *ucsi)
 	mutex_unlock(&ucsi->ppm_lock);
 	if (ret)
 		return ret;
-	if (UCSI_CCI_CONNECTOR(cci))
-		ucsi_connector_change(ucsi, UCSI_CCI_CONNECTOR(cci));
+
+	change_mask = UCSI_CCI_CONNECTOR(cci) ? BIT(UCSI_CCI_CONNECTOR(cci) - 1) : 0;
+	for (i = 0; i < ucsi->cap.num_connectors && i < BITS_PER_LONG; i++)
+		change_mask |= UCSI_CONSTAT(&connector[i], CONNECTED) ? BIT(i) : 0;
+
+	for_each_set_bit(bit, &change_mask, BITS_PER_LONG)
+		ucsi_connector_change(ucsi, bit + 1);
 
 	return 0;
 
